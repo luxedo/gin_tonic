@@ -1,90 +1,94 @@
 """CircuitPython Essentials NeoPixel example"""
 import time
-import math
 import random
 import board
-import neopixel
+import npfirefly
+import adafruit_dotstar
 from analogio import AnalogIn
 
+# Vibration sensor configuration
+SENSOR_WINDOW = 64  # Moving average window
+SENSOR_MEAN_MIN_DEV_PERC = 0.09  # Mean minimum deviation in percent value
+SENSOR_BASELINE_OUTLIERS = 0.2  # Baseline measure
+SENSOR_SENSIBILITY = 0.2  # Sensor sensibility
 
-def fade(color1, color2, steps, current_step):
-    deltas = (
-        (color2[0] - color1[0]) / (steps - 1),
-        (color2[1] - color1[1]) / (steps - 1),
-        (color2[2] - color1[2]) / (steps - 1),
-    )
-    return (
-        math.floor(color1[0] + deltas[0] * current_step),
-        math.floor(color1[1] + deltas[1] * current_step),
-        math.floor(color1[2] + deltas[2] * current_step),
-    )
+# NeoPixels configuration
+PIXEL_PIN = board.A1  # Adafruit Gemma M0
+NUM_PIXELS = 50  # Adafruit Soft Flexible Wire NeoPixel Strand - 50 NeoPixels
+BRIGHTNESS = 1.0
+MIN_STEPS = 8  # Minimum firefly flicker timesteps
+MAX_STEPS = 64  # Maximum firefly flicker timesteps
+RED_RANGE = (127, 255)  # Red random color range
+GREEN_RANGE = (15, 63)  # Green random color range
+BLUE_RANGE = (0, 7)  # Blue random color range
 
 
-def random_color(red_range, green_range, blue_range):
-    return (
-        random.randint(*red_range),
-        random.randint(*green_range),
-        random.randint(*blue_range),
-    )
+class VibrationOutliers:
+    """
+    Measures the sensor at `port` with the `update` method and returns
+    the number of detected outliers (values above `mean_dev` percent of
+    the mean.
+    """
+
+    def __init__(self, port, window_size, mean_min_dev_perc=0.1):
+        self.port = port
+        self.window_size = window_size
+        self.mean_min_dev_perc = mean_min_dev_perc
+        self.sensor = AnalogIn(port)
+        self._read = [self.sensor.value] * window_size
+        self._outliers = 0
+
+    def read(self):
+        """
+        Makes another read
+        """
+        self._read.pop(0)
+        self._read.append(self.sensor.value)
+
+    @property
+    def outliers(self):
+        """
+        Returns the number of outliers currently in the window
+        """
+        self.window_counter = 1
+        mean = sum(self._read) / self.window_size
+        mean_min_dev = mean + mean * self.mean_min_dev_perc
+        self._outliers = len([r for r in self._read if r > mean_min_dev])
+        return self._outliers
 
 
 def main():
-    ANALOG_WINDOW = 4
-    ANALOG_SENSIBILITY = 5e-3
-    ANALOG_OFFSET = -11915
-    BASELINE_THRESHOLD = 0.01
-    PIXEL_PIN = board.A1
-    NUM_PIXELS = 50
-    BRIGHTNESS = 1.0
-    MIN_STEPS = 8
-    MAX_STEPS = 127
-    RED_RANDOM = (127, 255)
-    GREEN_RANDOM = (15, 91)
-    BLUE_RANDOM = (0, 7)
-    NO_PALETTE = 0.001
-
-    import adafruit_dotstar
-
-    board_led = adafruit_dotstar.DotStar(board.APA102_SCK, board.APA102_MOSI, 1)
-    board_led[0] = (0, 0, 0)
-
-    with neopixel.NeoPixel(
-        PIXEL_PIN, NUM_PIXELS, brightness=BRIGHTNESS, auto_write=True
-    ) as pixels:
-        px_states = [[-1, 0, (0, 0, 0)] for _ in pixels]
-        vibration_sensor = AnalogIn(board.A2)
-        threshold = 0
-        analog_read = [0]
+    vibration_sensor = VibrationOutliers(
+        board.A2, SENSOR_WINDOW, SENSOR_MEAN_MIN_DEV_PERC
+    )
+    with npfirefly.NeoPixelFirefly(
+        pin=board.A1,
+        n=NUM_PIXELS,
+        brightness=BRIGHTNESS,
+        min_steps=MIN_STEPS,
+        max_steps=MAX_STEPS,
+        red_range=RED_RANGE,
+        green_range=GREEN_RANGE,
+        blue_range=BLUE_RANGE,
+        extra_neopixels=[
+            # Board LED
+            adafruit_dotstar.DotStar(
+                board.APA102_SCK, board.APA102_MOSI, 1, auto_write=True
+            )
+        ],
+    ) as fireflies:
         while True:
-            # Vibration sensor set threshold
-            analog_read.append(vibration_sensor.value)
-            if len(analog_read) == ANALOG_WINDOW:
-                voltage = sum(analog_read) / ANALOG_WINDOW
-                threshold = ANALOG_SENSIBILITY * (voltage + ANALOG_OFFSET)
-                threshold = threshold if threshold > 0 else BASELINE_THRESHOLD
-                analog_read = []
+            vibration_sensor.read()
+            outliers = vibration_sensor.outliers
+            outliers = outliers if outliers > 0 else SENSOR_BASELINE_OUTLIERS
 
-            # Create random NeoPixel
-            new_pixel = random.random()
-            if new_pixel < threshold:
-                max_steps = random.randint(MIN_STEPS, MAX_STEPS)
-                idx = random.randint(0, len(px_states) - 1)
-                px_states[idx] = [
-                    max_steps - 1,
-                    max_steps,
-                    random_color((0, 255), (0, 255), (0, 255))
-                    if new_pixel < NO_PALETTE
-                    else random_color(RED_RANDOM, GREEN_RANDOM, BLUE_RANDOM),
-                ]
-
-            # Render NeoPixels
-            for i, st in enumerate(px_states):
-                if st[0] >= 0:
-                    if i == len(px_states) - 1:
-                        board_led[0] = fade((0, 0, 0), st[2], st[1], st[0])
-                    else:
-                        pixels[i] = fade((0, 0, 0), st[2], st[1], st[0])
-                    st[0] -= 1
+            # Start a random firefly
+            if random.random() < outliers / SENSOR_WINDOW / SENSOR_SENSIBILITY:
+                fireflies.max_steps = round(
+                    MAX_STEPS * ((outliers / SENSOR_WINDOW * 2 + 1))
+                )
+                fireflies.flicker(final_color=(0, 0, 0))
+            fireflies.update()
 
 
 if __name__ == "__main__":
