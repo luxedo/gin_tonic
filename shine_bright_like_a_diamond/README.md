@@ -18,7 +18,7 @@ a pull down resistor to `A2`.
 This project uses [CircuitPython](https://circuitpython.org/).
 
 The main script imports the `NeoPixelFirefly` class from
-[npfirefly](shine_bright_like_a_diamond/npfirefly.py) library. _Feel
+[npfirefly](npfirefly.py) library. _Feel
 free to download and `flicker` your own fireflies._. Configurations
 for the NeoPixels are:
 
