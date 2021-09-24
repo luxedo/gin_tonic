@@ -23,15 +23,15 @@ free to download and `flicker` your own fireflies._. Configurations
 for the NeoPixels are:
 
 ```python
-    # NeoPixels configuration
-    PIXEL_PIN = board.A1  # Adafruit Gemma M0
-    NUM_PIXELS = 50  # Adafruit Soft Flexible Wire NeoPixel Strand - 50 NeoPixels
-    BRIGHTNESS = 1.0
-    MIN_STEPS = 8  # Minimum firefly flicker timesteps
-    MAX_STEPS = 127  # Maximum firefly flicker timesteps
-    RED_RANGE = (127, 255)  # Red random color range
-    GREEN_RANGE = (15, 63)  # Green random color range
-    BLUE_RANGE = (0, 7)  # Blue random color range
+# NeoPixels configuration
+PIXEL_PIN = board.A1  # Adafruit Gemma M0
+NUM_PIXELS = 50  # Adafruit Soft Flexible Wire NeoPixel Strand - 50 NeoPixels
+BRIGHTNESS = 1.0
+MIN_STEPS = 8  # Minimum firefly flicker timesteps
+MAX_STEPS = 32  # Maximum firefly flicker timesteps
+RED_RANGE = (127, 255)  # Red random color range
+GREEN_RANGE = (15, 63)  # Green random color range
+BLUE_RANGE = (0, 7)  # Blue random color range
 ```
 
 Then, a vibration sensor detects movement and starts new fireflies. The
@@ -44,11 +44,11 @@ You may need to tweak the configurations for your your sensor for best
 results:
 
 ```python
-    # Vibration sensor configuration
-    SENSOR_WINDOW = 64  # Moving average window
-    SENSOR_MEAN_MIN_DEV_PERC = 0.09  # Mean minimum deviation in percent value
-    SENSOR_BASELINE_OUTLIERS = 0.2  # Baseline measure
-    SENSOR_SENSIBILITY = 0.2  # Sensor sensibility
+# Vibration sensor configuration
+SENSOR_WINDOW = 64  # Moving average window
+SENSOR_MEAN_MIN_DEV_PERC = 0.09  # Mean minimum deviation in percent value
+SENSOR_BASELINE_OUTLIERS = 0.1  # Baseline measure
+SENSOR_SENSIBILITY = 0.2  # Sensor sensibility
 ```
 
 ## License

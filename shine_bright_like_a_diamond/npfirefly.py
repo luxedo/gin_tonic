@@ -33,6 +33,8 @@ class NeoPixelFirefly(neopixel.NeoPixel):
     ):
         super().__init__(*args, **kwargs)
         self.extra_neopixels = extra_neopixels
+        for npxs in self.extra_neopixels:
+            npxs.fill((0, 0, 0))
         self.lengths = [len(self)] + [len(npxs) for npxs in self.extra_neopixels]
         self.n_total = sum(self.lengths)
         self.min_steps = min_steps
