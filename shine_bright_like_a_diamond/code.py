@@ -95,6 +95,9 @@ def main():
                 )
                 # Start a random firefly
                 fireflies.flicker(final_color=(0, 0, 0))
+                if new_fireflies > 0.5:
+                    for i in range(SENSOR_WINDOW):
+                        fireflies.flicker(final_color=(0, 0, 0))
             fireflies.update()
 
 
