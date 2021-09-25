@@ -1,8 +1,8 @@
-import neopixel
+from neopixel import NeoPixel
 import random
 
 
-class NeoPixelFirefly(neopixel.NeoPixel):
+class NeoPixelFirefly(NeoPixel):
     """
     Neopixel firefly effect. Neopixels should blink and then fade out.
 

@@ -1,16 +1,17 @@
 """CircuitPython Essentials NeoPixel example"""
-import time
 import random
 import board
-import npfirefly
-import adafruit_dotstar
+from adafruit_dotstar import DotStar
 from analogio import AnalogIn
+from micropython import const
+import npfirefly
+
 
 # Vibration sensor configuration
-SENSOR_WINDOW = 64  # Moving average window
-SENSOR_MEAN_MIN_DEV_PERC = 0.09  # Mean minimum deviation in percent value
-SENSOR_BASELINE_OUTLIERS = 0.1  # Baseline measure
-SENSOR_SENSIBILITY = 0.2  # Sensor sensibility
+SENSOR_WINDOW = 16  # Moving average window
+SENSOR_MEAN_MIN_DEV_PERC = 0.06  # Mean minimum deviation in percent value
+SENSOR_MIN_OUTLIERS = 5  # Baseline measure
+SENSOR_MIN_FLICKER = 0.01  # Sensor minimum flicker
 
 # NeoPixels configuration
 PIXEL_PIN = board.A1  # Adafruit Gemma M0
@@ -35,26 +36,33 @@ class VibrationOutliers:
         self.window_size = window_size
         self.mean_min_dev_perc = mean_min_dev_perc
         self.sensor = AnalogIn(port)
-        self._read = [self.sensor.value] * window_size
-        self._outliers = 0
+        w = 8  # Baseline window multiplier
+        self.read_batch(w * self.window_size)  # Warmup
+        mean = sum(self.read_batch(w * self.window_size)) / (self.window_size * w)
+        self.threshold = mean + mean * self.mean_min_dev_perc
+        self._read = [0] * window_size
+
+    def read_batch(self, n):
+        """
+        Returns several reads
+        """
+        return [self.sensor.value for _ in range(n)]
 
     def read(self):
         """
         Makes another read
         """
+        value = self.sensor.value > self.threshold
         self._read.pop(0)
-        self._read.append(self.sensor.value)
+        self._read.append(value)
+        return value
 
     @property
     def outliers(self):
         """
         Returns the number of outliers currently in the window
         """
-        self.window_counter = 1
-        mean = sum(self._read) / self.window_size
-        mean_min_dev = mean + mean * self.mean_min_dev_perc
-        self._outliers = len([r for r in self._read if r > mean_min_dev])
-        return self._outliers
+        return sum(self._read)
 
 
 def main():
@@ -72,22 +80,20 @@ def main():
         blue_range=BLUE_RANGE,
         extra_neopixels=[
             # Board LED
-            adafruit_dotstar.DotStar(
-                board.APA102_SCK, board.APA102_MOSI, 1, auto_write=True
-            )
+            DotStar(board.APA102_SCK, board.APA102_MOSI, 1, auto_write=True)
         ],
     ) as fireflies:
         while True:
             # Reads sensor
             vibration_sensor.read()
-            outliers = vibration_sensor.outliers
-            outliers = outliers if outliers > 0 else SENSOR_BASELINE_OUTLIERS
-
-            # Start a random firefly
-            if random.random() < outliers / SENSOR_WINDOW / SENSOR_SENSIBILITY:
+            new_fireflies = (vibration_sensor.outliers - SENSOR_MIN_OUTLIERS) / const(
+                (SENSOR_WINDOW - SENSOR_MIN_OUTLIERS)
+            )
+            if new_fireflies > 0 or random.random() < SENSOR_MIN_FLICKER:
                 fireflies.max_steps = round(
-                    MAX_STEPS * ((outliers / SENSOR_WINDOW * 2 + 1))
+                    MAX_STEPS * (abs(new_fireflies) * SENSOR_MIN_OUTLIERS + 1)
                 )
+                # Start a random firefly
                 fireflies.flicker(final_color=(0, 0, 0))
             fireflies.update()
 

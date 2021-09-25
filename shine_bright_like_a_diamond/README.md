@@ -45,10 +45,10 @@ results:
 
 ```python
 # Vibration sensor configuration
-SENSOR_WINDOW = 64  # Moving average window
-SENSOR_MEAN_MIN_DEV_PERC = 0.09  # Mean minimum deviation in percent value
-SENSOR_BASELINE_OUTLIERS = 0.1  # Baseline measure
-SENSOR_SENSIBILITY = 0.2  # Sensor sensibility
+SENSOR_WINDOW = 16  # Moving average window
+SENSOR_MEAN_MIN_DEV_PERC = 0.06  # Mean minimum deviation in percent value
+SENSOR_MIN_OUTLIERS = 5  # Baseline measure
+SENSOR_MIN_FLICKER = 0.01  # Sensor minimum flicker
 ```
 
 ## License
