@@ -21,6 +21,9 @@ class NeoPixelRainbow(NeoPixel):
         self.base_idx = 0
         self.speed_acc = 0
         self.color_table = self.create_color_table(self.steps, initial_hue, hue_fn)
+        for i in range(len(self)):
+            self[i] = (0, 0, 0)
+        self.show()
 
     def update(self):
         """
