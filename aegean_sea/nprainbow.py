@@ -16,7 +16,7 @@ class NeoPixelRainbow(NeoPixel):
         self, *args, color_delta, initial_hue, speed, hue_fn=lambda x: x, **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.color_delta = int((self.steps * color_delta) / len(self))
+        self.color_delta = self.steps * color_delta / len(self)
         self.speed = speed
         self.base_idx = 0
         self.speed_acc = 0
@@ -27,10 +27,15 @@ class NeoPixelRainbow(NeoPixel):
         Please 🙏 call me at each tick to update the LEDs
         """
         idx = 0
+        delta = 0
         for i in range(len(self)):
             offset = (self.base_idx + idx) % (3 * self.steps)
-            self[i] = self.color_table[offset : offset + 3]
-            idx += 3 * self.color_delta
+            self[i] = list(self.color_table[offset : offset + 3])
+            delta += self.color_delta
+            if delta >= 1:
+                skip = int(delta)
+                idx += 3 * skip
+                delta -= skip
         self.speed_acc += self.speed
         if self.speed_acc >= 1:
             self.base_idx += 3 * int(self.speed_acc)
