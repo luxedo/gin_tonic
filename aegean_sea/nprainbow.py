@@ -1,4 +1,6 @@
 from array import array
+import math
+
 from neopixel import NeoPixel
 
 
@@ -10,20 +12,50 @@ class NeoPixelRainbow(NeoPixel):
     for demo and examples.
     """
 
-    steps = 256 * 2
-
     def __init__(
-        self, *args, color_delta, initial_hue, speed, hue_fn=lambda x: x, **kwargs
+        self,
+        *args,
+        color_delta,
+        initial_hue,
+        speed,
+        steps,
+        hue_fn=lambda x: x,
+        **kwargs
     ):
         super().__init__(*args, **kwargs)
-        self.color_delta = self.steps * color_delta / len(self)
+        self.hue_fn = hue_fn
+        self.color_delta = color_delta
+        self.initial_hue = initial_hue % 1
+        self.steps = steps
         self.speed = speed
         self.base_idx = 0
         self.speed_acc = 0
-        self.color_table = self.create_color_table(self.steps, initial_hue, hue_fn)
         for i in range(len(self)):
             self[i] = (0, 0, 0)
         self.show()
+
+    @property
+    def steps(self):
+        return self._steps
+
+    @steps.setter
+    def steps(self, value):
+        self._steps = value
+        self.color_table = self.create_color_table(
+            self._steps, self.initial_hue, self.hue_fn
+        )
+
+    @property
+    def speed(self):
+        return self._speed
+
+    @speed.setter
+    def speed(self, value):
+        self._speed = value
+        speed_factor = self.sigmoid(value / 100) - 0.5
+        if speed_factor < 0:
+            speed_factor = 1 + speed_factor
+        self._normalized_speed = speed_factor * self._steps
 
     def update(self):
         """
@@ -31,15 +63,16 @@ class NeoPixelRainbow(NeoPixel):
         """
         idx = 0
         delta = 0
+        color_steps_delta = self.steps * self.color_delta / len(self)
         for i in range(len(self)):
             offset = (self.base_idx + idx) % (3 * self.steps)
             self[i] = list(self.color_table[offset : offset + 3])
-            delta += self.color_delta
-            if delta >= 1:
+            delta += color_steps_delta
+            if delta >= 1 or delta <= 1:
                 skip = int(delta)
                 idx += 3 * skip
                 delta -= skip
-        self.speed_acc += self.speed
+        self.speed_acc += self._normalized_speed
         if self.speed_acc >= 1:
             self.base_idx += 3 * int(self.speed_acc)
             self.base_idx %= 3 * self.steps
@@ -56,6 +89,10 @@ class NeoPixelRainbow(NeoPixel):
             for c in self.hsv_to_rgb(hue, 1, 1):
                 table.append(int(255 * c))
         return table
+
+    @staticmethod
+    def sigmoid(x):
+        return 1 / (1 + math.exp(-x))
 
     # THANK YOU COLORSYS MODULE!
     @staticmethod
