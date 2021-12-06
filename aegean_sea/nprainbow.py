@@ -35,6 +35,14 @@ class NeoPixelRainbow(NeoPixel):
         self.show()
 
     @property
+    def initial_hue(self):
+        return self._initial_hue
+
+    @initial_hue.setter
+    def initial_hue(self, value):
+        self._initial_hue = value % 1
+
+    @property
     def steps(self):
         return self._steps
 
