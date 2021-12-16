@@ -57,7 +57,7 @@ import board
 import math
 import time
 import analogio
-import touchio
+import digitalio
 from nprainbow import NeoPixelRainbow
 
 
@@ -66,77 +66,60 @@ PIXEL_PIN = board.GP18  # Neopixel pin
 NUM_PIXELS = 300  # Number of NeoPixels
 
 # NEOPIXEL INITIAL CONFIGURATION
-SPEED = 0.2  # Transition speed
+SPEED = 1.0  # Transition speed
 NUM_COLORS = 4096  # Number of colors in the table
 COLOR_DELTA = 0.3  # Hue delta (begining of the strip <=> end of the strip)
+COLOR_DELTA = 1.0  # Hue delta (begining of the strip <=> end of the strip)
 INITIAL_HUE = 0.0  # Hue offset for the initial color
 
 # CONFIGURATION RANGES
-BRIGHTNESS_STEPS = (0, 0.01, 0.03, 0.1, 0.30, 0.60, 1)
+BRIGHTNESS_STEPS = (0, 0.01, 0.03, 0.1, 0.30, 1.0)
 BRIGHTNESS_INITIAL_STEP = 3
-SPEED_RANGE = (-1000, 1000)
+SPEED_RANGE = (-64, 64)
 NUM_COLORS_RANGE = (1, 4096)
-COLOR_DELTA_RANGE = (-100, 100)
-INITIAL_HUE_RANGE = (0, 1)
+COLOR_DELTA_RANGE = (-16, 16)
+HUE_RANGE = (0, 0.5)
 
 # Super users only
 SIGMOID_A = 3  # Hue bias parameter a
 SIGMOID_B = 5  # Hue bias parameter b
 
 # BUTTONS CONFIGURATION
-BTN1_PIN = board.A0  # Neopixel pin
-BTN_DEBOUNCE = 200
+BTN1_PIN = board.GP7  # Neopixel pin
+BTN2_PIN = board.GP11  # Neopixel pin
 FEEDBACK_COLOR = (63, 63, 63)
-
+BTN_DEBOUNCE = 0.2
+POT1_PIN = board.A0
+POT2_PIN = board.A2
 
 # Peripherals
-class TouchButton:
+class ClickButton:
     def __init__(self, pin, debounce=0):
-        self.button = touchio.TouchIn(pin)
-        self.button.threshold = 4000
+        self.button = digitalio.DigitalInOut(pin)
+        self.button.direction = digitalio.Direction.INPUT
+        self.button.pull = digitalio.Pull.DOWN
         self.pin = pin
         self.debounce = debounce
-        self.timeout = time.time()
+        self.timeout = time.monotonic() + self.debounce
 
     @property
     def pressed(self):
-        if self.button.value != 0 and time.time() > self.timeout:
-            self.timeout = time.time()
+        now = time.monotonic()
+        if self.button.value and now > self.timeout:
+            self.timeout = now + self.debounce
             return True
         return False
 
 
-class MockAnalogIn:
-    def __init__(self, pin):
-        self.growing = True
-        self.counter = 1000
-        self.min = 1000
-        self.max = 64000
-
-    @property
-    def value(self):
-        if self.growing:
-            self.counter += 100
-            if self.counter >= self.max:
-                self.growing = False
-        else:
-            self.counter -= 100
-            if self.counter <= self.min:
-                self.growing = True
-        return self.counter
-
-
 class Potentiometer:
-    change_trheshold = 10
-    _min_value = 1000
+    change_threshold = 800
+    _min_value = 9000
     _max_value = 64000
 
     def __init__(
         self, analog_in, initial_value, value_range, callback, profile="linear"
     ):
         self.analog_in = analog_in
-        self.locked_value = initial_value
-        self.locked = True
         self._delta = self._max_value - self._min_value
         self.min_value = value_range[0]
         self.max_value = value_range[1]
@@ -157,25 +140,39 @@ class Potentiometer:
             self._profile = lambda x: (((2 * x) - 1) ** 5 + 1) / 2
         else:
             raise NotImplemented(f"Profile {self.profile} not implemented")
-        self._previous_value = self.analog_in.value
+        self.locked = True
+        self.locked_value = self.bisection(
+            lambda x: self.transform(x) - initial_value, 0, 1e8, 1000, 100
+        )
+        self._previous_value = self.locked_value
         self._value = self.analog_in.value
 
     def has_changed(self):
         self._value = self.analog_in.value
-        val_diff = abs(self._previous_value - self._value)
         if self.locked:
-            if val_diff < self.change_trheshold:
+            val_diff = abs(self.locked_value - self._value)
+            if val_diff < 5 * self.change_threshold:
                 self.locked = False
                 return True
-        elif val_diff > self.change_trheshold:
-            self._previous_value = self._value
-            return True
+        else:
+            val_diff = abs(self._previous_value - self._value)
+            if val_diff > self.change_threshold:
+                self._previous_value = self._value
+                return True
         return False
 
     @property
     def value(self):
+        value = self.transform(self._value)
+        if value < self.min_value:
+            return self.min_value
+        elif value > self.max_value:
+            return self.max_value
+        return value
+
+    def transform(self, value):
         return (
-            self._profile((self._value - self._min_value) / self._delta) * self.delta
+            self._profile((value - self._min_value) / self._delta) * self.delta
             + self.min_value
         )
 
@@ -189,6 +186,59 @@ class Potentiometer:
 
     def unlock(self):
         self.locked = False
+
+    @staticmethod
+    def bisection(f, a, b, epsilon, N):
+        """
+        https://personal.math.ubc.ca/~pwalls/math-python/roots-optimization/bisection/
+        Approximate solution of f(x)=0 on interval [a,b] by bisection method.
+
+        Parameters
+        ----------
+        f : function
+            The function for which we are trying to approximate a solution f(x)=0.
+        a,b : numbers
+            The interval in which to search for a solution. The function returns
+            None if f(a)*f(b) >= 0 since a solution is not guaranteed.
+        N : (positive) integer
+            The number of iterations to implement.
+
+        Returns
+        -------
+        x_N : number
+            The midpoint of the Nth interval computed by the bisection method. The
+            initial interval [a_0,b_0] is given by [a,b]. If f(m_n) == 0 for some
+            midpoint m_n = (a_n + b_n)/2, then the function returns this solution.
+            If all signs of values f(a_n), f(b_n) and f(m_n) are the same at any
+            iteration, the bisection method fails and return None.
+
+        Examples
+        --------
+        >>> f = lambda x: x**2 - x - 1
+        >>> bisection(f,1,2,25)
+        1.618033990263939
+        >>> f = lambda x: (2*x - 1)*(x - 3)
+        >>> bisection(f,0,1,10)
+        0.5
+        """
+        if f(a) * f(b) >= 0:
+            return None
+        a_n = a
+        b_n = b
+        for n in range(1, N + 1):
+            m_n = (a_n + b_n) / 2
+            f_m_n = f(m_n)
+            if f(a_n) * f_m_n < 0:
+                a_n = a_n
+                b_n = m_n
+            elif f(b_n) * f_m_n < 0:
+                a_n = m_n
+                b_n = b_n
+            elif abs(f_m_n) < epsilon:
+                return m_n
+            else:
+                return None
+        return (a_n + b_n) / 2
 
 
 class PotSequence:
@@ -232,59 +282,57 @@ def main():
         NUM_PIXELS,
         color_delta=COLOR_DELTA,
         initial_hue=INITIAL_HUE,
+        hue_range=HUE_RANGE,
         speed=SPEED,
         steps=NUM_COLORS,
         hue_fn=lambda x: locked_sigmoid(x, SIGMOID_A, SIGMOID_B),
         auto_write=False,
     )
-    btn1 = TouchButton(BTN1_PIN, BTN_DEBOUNCE)
+    btn1 = ClickButton(BTN1_PIN, BTN_DEBOUNCE)
+    btn2 = ClickButton(BTN2_PIN, BTN_DEBOUNCE)
 
-    # pot1 = analogio.AnalogIn(board.A1)
-    # pot2 = analogio.AnalogIn(board.A2)
-    pot1 = MockAnalogIn(board.A1)
-    pot2 = MockAnalogIn(board.A2)
-
-    def update_speed(value):
-        pixels.speed = value
-
-    def update_num_colors(value):
-        pixels.steps = int(value)
-
-    def update_color_delta(value):
-        pixels.color_delta = value
-
-    def update_initial_hue(value):
-        pixels.initial_hue = value
+    pot1 = analogio.AnalogIn(POT1_PIN)
+    pot2 = analogio.AnalogIn(POT2_PIN)
 
     pot_speed = Potentiometer(
-        pot1, SPEED, SPEED_RANGE, callback=update_speed, profile="symmetric_seventh"
-    )
-    pot_num_colors = Potentiometer(
-        pot2,
-        NUM_COLORS,
-        NUM_COLORS_RANGE,
-        callback=update_num_colors,
-        profile="cubic",
+        pot1,
+        SPEED,
+        SPEED_RANGE,
+        callback=lambda value: setattr(pixels, "speed", value),
+        profile="symmetric_fifth",
     )
     pot_color_delta = Potentiometer(
-        pot1,
+        pot2,
         COLOR_DELTA,
         COLOR_DELTA_RANGE,
-        callback=update_color_delta,
-        profile="symmetric_seventh",
+        callback=lambda value: setattr(pixels, "color_delta", value),
+        profile="symmetric_cubic",
     )
-    pot_initial_hue = Potentiometer(
+    pot_hue_lower = Potentiometer(
+        pot1,
+        0,
+        (0, 1),
+        callback=lambda value: setattr(
+            pixels,
+            "hue_range",
+            (value, pixels.hue_range[1]),
+        ),
+        profile="linear",
+    )
+    pot_hue_delta = Potentiometer(
         pot2,
-        INITIAL_HUE,
-        INITIAL_HUE_RANGE,
-        callback=update_initial_hue,
+        1,
+        (0, 1),
+        callback=lambda value: setattr(
+            pixels, "hue_range", (pixels.hue_range[0], value)
+        ),
         profile="linear",
     )
 
     mode_sequence = PotSequence(
         [
-            [pot_speed, pot_num_colors],
-            [pot_color_delta, pot_initial_hue],
+            [pot_hue_lower, pot_hue_delta],
+            [pot_speed, pot_color_delta],
         ]
     )
 
@@ -294,12 +342,11 @@ def main():
     while True:
         if btn1.pressed:
             button_feedback(pixels)
+            brightness_idx = (brightness_idx + 1) % len(BRIGHTNESS_STEPS)
+            pixels.brightness = BRIGHTNESS_STEPS[brightness_idx]
+        if btn2.pressed:
+            button_feedback(pixels)
             mode_sequence.next()
-        # if btn2.pressed:
-        #     button_feedback(pixels)
-        #     brightness_idx = (brightness_idx + 1) % len(BRIGHTNESS_STEPS)
-        #     pixels.brightness = BRIGHTNESS_STEPS[brightness_idx]
-
         mode_sequence.update_mode()
         pixels.update()
         pixels.show()

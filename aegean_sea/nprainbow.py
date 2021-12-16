@@ -1,3 +1,6 @@
+"""
+NeoPixel rainbow library
+"""
 from array import array
 import math
 
@@ -17,6 +20,7 @@ class NeoPixelRainbow(NeoPixel):
         *args,
         color_delta,
         initial_hue,
+        hue_range,
         speed,
         steps,
         hue_fn=lambda x: x,
@@ -25,8 +29,9 @@ class NeoPixelRainbow(NeoPixel):
         super().__init__(*args, **kwargs)
         self.hue_fn = hue_fn
         self.color_delta = color_delta
-        self.initial_hue = initial_hue % 1
+        self.initial_hue = initial_hue
         self.steps = steps
+        self.hue_range = hue_range
         self.speed = speed
         self.base_idx = 0
         self.speed_acc = 0
@@ -63,27 +68,49 @@ class NeoPixelRainbow(NeoPixel):
         speed_factor = self.sigmoid(value / 100) - 0.5
         if speed_factor < 0:
             speed_factor = 1 + speed_factor
-        self._normalized_speed = speed_factor * self._steps
+        self._normalized_speed = speed_factor * 2 * self._hue_steps
+
+    @property
+    def hue_range(self):
+        return self._hue_range
+
+    @hue_range.setter
+    def hue_range(self, value):
+        self._hue_range = value
+        self._hue_lower = round(value[0] * self.steps)
+        self._hue_steps = round(value[1] * self.steps)
+        self._hue_steps = 1 if self._hue_steps <= 0 else self._hue_steps
+        self._hue_loop = self._hue_steps > 0.99 * self.steps
 
     def update(self):
         """
         Please 🙏 call me at each tick to update the LEDs
         """
-        idx = 0
-        delta = 0
-        color_steps_delta = self.steps * self.color_delta / len(self)
-        for i in range(len(self)):
-            offset = (self.base_idx + idx) % (3 * self.steps)
-            self[i] = list(self.color_table[offset : offset + 3])
-            delta += color_steps_delta
-            if delta >= 1 or delta <= 1:
-                skip = int(delta)
-                idx += 3 * skip
-                delta -= skip
+        color_steps_delta = self._hue_steps * self.color_delta / len(self)
+        if self._hue_loop:
+            color_indices = [
+                round((self._hue_lower + self.base_idx + i * color_steps_delta))
+                % self.steps
+                for i in range(len(self))
+            ]
+        else:
+            color_indices = []
+            for i in range(len(self)):
+                index = round(self.base_idx + i * color_steps_delta) % (
+                    2 * self._hue_steps
+                )
+                if index > self._hue_steps:
+                    index = self._hue_steps - (index % self._hue_steps)
+                index = (self._hue_lower + index) % self.steps
+                color_indices.append(index)
+
+        for i, color in enumerate(color_indices):
+            self[i] = list(self.color_table[3 * color : 3 * (color + 1)])
+
         self.speed_acc += self._normalized_speed
         if self.speed_acc >= 1:
-            self.base_idx += 3 * int(self.speed_acc)
-            self.base_idx %= 3 * self.steps
+            self.base_idx += int(self.speed_acc)
+            self.base_idx %= 2 * self._hue_steps
             self.speed_acc = 0
 
     def create_color_table(self, steps, initial_hue=0, hue_fn=lambda x: x):
