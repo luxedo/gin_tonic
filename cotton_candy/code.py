@@ -57,6 +57,7 @@ def sample_colors():
     lowest = min([red, green, blue])
     highest = max([red, green, blue])
     delta = highest - lowest
+    delta = delta if delta != 0 else 1
     return (
         int((red - lowest) / delta * 255),
         int((green - lowest) / delta * 255),
