@@ -1,5 +1,4 @@
 """CircuitPython Essentials NeoPixel example"""
-import math
 import random
 import time
 import board
@@ -10,30 +9,21 @@ from adafruit_circuitplayground import cp
 
 # NeoPixels configuration
 PIXEL_PIN = board.A1  # Adafruit Gemma M0
-NUM_PIXELS = 50  # Adafruit Soft Flexible Wire NeoPixel Strand - 50 NeoPixels
-BRIGHTNESS = 0.1
-MIN_STEPS = 2  # Minimum firefly flicker timesteps
-MAX_STEPS = 8  # Maximum firefly flicker timesteps
-MAX_COLOR_DELTA = 100  # Maximum color difference
+NUM_PIXELS = 70  # Adafruit Soft Flexible Wire NeoPixel Strand - 50 NeoPixels
+BRIGHTNESS_VALUES = [0, 0.01, 0.1, 0.5, 1.0]
+BRIGHTNESS_INITIAL_IDX = 3
+MIN_STEPS = 4  # Minimum firefly flicker timesteps
+MAX_STEPS = 16  # Maximum firefly flicker timesteps
+MAX_COLOR_DELTA = 200  # Maximum color difference
 
+# Microphone levels
+LEVEL_OFSET = 50
+LEVEL_SENSIBILITY = 1 / 20
+DEBOUNCE_TIMEOUT = 0.2
 
-def sample_color(samples, color):
-    for i in range(len(cp.pixels)):
-        cp.pixels[i] = color
-    acc = 0
-    for _ in range(samples):
-        acc += cp.light
-    for i in range(len(cp.pixels)):
-        cp.pixels[i] = (0, 0, 0)
-    return acc / samples
-
-
-def softmax(red, green, blue):
-    exp_red = math.exp(red)
-    exp_green = math.exp(green)
-    exp_blue = math.exp(blue)
-    exp_sum = exp_red + exp_green + exp_blue
-    return exp_red / exp_sum, exp_green / exp_sum, exp_blue / exp_sum
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
 
 
 def sample_countdown():
@@ -47,12 +37,23 @@ def sample_countdown():
                 return
 
 
+def sample_color(samples, color):
+    for i in range(len(cp.pixels)):
+        cp.pixels[i] = color
+    acc = 0
+    for _ in range(samples):
+        acc += cp.light
+    for i in range(len(cp.pixels)):
+        cp.pixels[i] = (0, 0, 0)
+    return acc / samples
+
+
 def sample_colors():
     sample_countdown()
     samples = 100
-    red = sample_color(samples, (255, 0, 0))
-    green = sample_color(samples, (0, 255, 0))
-    blue = sample_color(samples, (0, 0, 255))
+    red = sample_color(samples, RED)
+    green = sample_color(samples, GREEN)
+    blue = sample_color(samples, BLUE)
     lowest = min([red, green, blue])
     highest = max([red, green, blue])
     delta = highest - lowest
@@ -74,23 +75,23 @@ def randomize_range(red, green, blue):
 
 
 def bound_color(color):
-    color = 0 if color < 0 else color
-    color = 255 if color > 255 else color
-    return color
+    return 0 if color < 0 else 255 if color > 255 else color
 
 
 def main():
-    cp.pixels.brightness = BRIGHTNESS
-    cp.red_led = False
-    cp.green_led = False
+    brightness_idx = BRIGHTNESS_INITIAL_IDX
     with npfirefly.NeoPixelFirefly(
         pin=PIXEL_PIN,
         n=NUM_PIXELS,
-        brightness=BRIGHTNESS,
         min_steps=MIN_STEPS,
         max_steps=MAX_STEPS,
-        # extra_neopixels=[cp.pixels],
+        extra_neopixels=[cp.pixels],
     ) as fireflies:
+        brightness_idx = BRIGHTNESS_INITIAL_IDX
+        cp.pixels.brightness = BRIGHTNESS_VALUES[brightness_idx]
+        fireflies.neopixels.brightness = BRIGHTNESS_VALUES[brightness_idx]
+        cp.red_led = False
+        debounce = time.monotonic()
         while True:
             red, green, blue = sample_colors()
             red_range, green_range, blue_range = randomize_range(red, green, blue)
@@ -98,14 +99,25 @@ def main():
             fireflies.red_range = red_range
             fireflies.green_range = green_range
             fireflies.blue_range = blue_range
-            countdown = random.random() * 10000
+            countdown = (random.random() + 1) * 10000
             for _ in range(countdown):
                 # Reads sensor
-                if cp.button_a or cp.button_b:
+                if cp.button_a:
                     break
-                for _ in range(int(cp.sound_level / 20)):
+                elif cp.button_b:
+                    t = time.monotonic()
+                    if t - debounce > DEBOUNCE_TIMEOUT:
+                        debounce = t
+                        brightness_idx = (brightness_idx + 1) % len(BRIGHTNESS_VALUES)
+                        fireflies.neopixels.brightness = BRIGHTNESS_VALUES[
+                            brightness_idx
+                        ]
+                        cp.pixels.brightness = BRIGHTNESS_VALUES[brightness_idx]
+
+                for _ in range(int((cp.sound_level - LEVEL_OFSET) * LEVEL_SENSIBILITY)):
                     fireflies.flicker(final_color=(0, 0, 0))
                 fireflies.update()
+                fireflies.show()
 
 
 if __name__ == "__main__":

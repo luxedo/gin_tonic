@@ -1,5 +1,6 @@
-from neopixel import NeoPixel
 import random
+import time
+from neopixel import NeoPixel
 
 
 class NeoPixelFirefly:
@@ -31,7 +32,7 @@ class NeoPixelFirefly:
         extra_neopixels=list(),
         **kwargs
     ):
-        self.neopixels = NeoPixel(*args, **kwargs)
+        self.neopixels = NeoPixel(*args, **kwargs, auto_write=False)
         self.extra_neopixels = extra_neopixels
         for npxs in self.extra_neopixels:
             npxs.fill((0, 0, 0))
@@ -76,7 +77,7 @@ class NeoPixelFirefly:
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
 
-    def flicker(self, i=None, steps=None, initial_color=None, final_color=(0, 0, 0)):
+    def flicker(self, i=None, steps=None, initial_color=None, final_color=None):
         """
         Creates a random neopixel flicker. Any unsupplied argument is
         set at random, except for `final_color` that defaults to
