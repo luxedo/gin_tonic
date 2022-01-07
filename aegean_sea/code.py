@@ -51,27 +51,58 @@ SIGMOID_B = 3  # Hue bias parameter b
 # BUTTONS CONFIGURATION
 BTN1_PIN = board.GP7  # Neopixel pin
 BTN2_PIN = board.GP11  # Neopixel pin
-BTN_DEBOUNCE = 0.2
 POT1_PIN = board.A0
 POT2_PIN = board.A2
 
 # Peripherals
 class ClickButton:
-    def __init__(self, pin, debounce=0):
+    PRESSED = "PRESSED"
+    RELEASED = "RELEASED"
+
+    def __init__(
+        self,
+        pin,
+        press_callback=lambda: None,
+        release_callback=lambda: None,
+        hold_callback=lambda: None,
+        hold_callback_timeout=1,
+    ):
         self.button = digitalio.DigitalInOut(pin)
         self.button.direction = digitalio.Direction.INPUT
         self.button.pull = digitalio.Pull.DOWN
         self.pin = pin
-        self.debounce = debounce
-        self.timeout = time.monotonic() + self.debounce
+        self._value = self.button.value
+        self._previous_value = self.button.value
+        self.press_callback = press_callback
+        self.release_callback = release_callback
+        self.hold_callback = hold_callback
+        self.hold_callback_timeout = hold_callback_timeout
+        self.skip_release = False
+        self.holding = False
+        self.holding_tick = 0
 
-    @property
-    def pressed(self):
-        now = time.monotonic()
-        if self.button.value and now > self.timeout:
-            self.timeout = now + self.debounce
-            return True
-        return False
+    def update(self):
+        self._previous_value = self._value
+        self._value = self.button.value
+        if self._previous_value != self._value:
+            if self._value:
+                self.press_callback()
+                self.holding = True
+                self.holding_tick = time.monotonic()
+            else:
+                if self.skip_release:
+                    self.skip_release = False
+                    return
+                self.release_callback()
+                self.holding = False
+        else:
+            if (
+                self.holding
+                and time.monotonic() - self.holding_tick > self.hold_callback_timeout
+            ):
+                self.hold_callback()
+                self.holding = False
+                self.skip_release = True
 
 
 class Potentiometer:
@@ -84,6 +115,7 @@ class Potentiometer:
         self, analog_in, initial_value, value_range, callback, profile="linear"
     ):
         self.analog_in = analog_in
+        self.initial_value = initial_value
         self._delta = self._max_value - self._min_value
         self.min_value = value_range[0]
         self.max_value = value_range[1]
@@ -104,26 +136,8 @@ class Potentiometer:
             self._profile = lambda x: (((2 * x) - 1) ** 5 + 1) / 2
         else:
             raise NotImplemented(f"Profile {self.profile} not implemented")
-        self.locked_value = self.bisection(
-            lambda x: self.transform((x - self._min_value) / self._delta)
-            - initial_value,
-            0,
-            1e8,
-            1000,
-            100,
-        )
-        self._previous_value = self.locked_value
         self.window = [self.analog_in.value for _ in range(self.window_size)]
-        self._value = sum(self.window) / self.window_size
-        self._bound_value = (self.locked_value - self._min_value) / self._delta
-        self._bound_value = (
-            0
-            if self._bound_value < 0
-            else 1
-            if self._bound_value > 1
-            else self._bound_value
-        )
-        self.locked = True
+        self.lock(self.initial_value)
 
     def has_changed(self):
         self.window.pop(0)
@@ -170,11 +184,31 @@ class Potentiometer:
             return True
         return False
 
-    def lock(self):
-        if not self.locked:
-            self.locked_value = self._value
-            self._bound_value = self.bound_value
+    def lock(self, value=None):
+        if value is not None:
+            self.locked_value = self.bisection(
+                lambda x: self.transform((x - self._min_value) / self._delta) - value,
+                0,
+                1e8,
+                1000,
+                100,
+            )
+            self._previous_value = self.locked_value
+            self._value = sum(self.window) / self.window_size
+            self._bound_value = (self.locked_value - self._min_value) / self._delta
+            self._bound_value = (
+                0
+                if self._bound_value < 0
+                else 1
+                if self._bound_value > 1
+                else self._bound_value
+            )
             self.locked = True
+        else:
+            if not self.locked:
+                self.locked_value = self._value
+                self._bound_value = self.bound_value
+                self.locked = True
 
     def unlock(self):
         self.locked = False
@@ -251,6 +285,11 @@ class PotSequence:
             saturation=1.0,
         )
 
+    def reset(self):
+        for pot in self.all_pots:
+            pot.lock(pot.initial_value)
+            pot.callback(pot.initial_value)
+
     def next(self):
         for pot in self.modes[self.current_index]["pots"]:
             pot.lock()
@@ -301,8 +340,6 @@ def main():
         hue_fn=lambda x: locked_sigmoid(x, SIGMOID_A, SIGMOID_B),
         auto_write=False,
     )
-    btn1 = ClickButton(BTN1_PIN, BTN_DEBOUNCE)
-    btn2 = ClickButton(BTN2_PIN, BTN_DEBOUNCE)
 
     pot1 = analogio.AnalogIn(POT1_PIN)
     pot2 = analogio.AnalogIn(POT2_PIN)
@@ -365,10 +402,25 @@ def main():
         indicator_timeout=5,
     )
 
+    btn1 = ClickButton(
+        BTN1_PIN,
+        release_callback=lambda: setattr(
+            pixels,
+            "brightness",
+            0 if pixels.brightness != 0 else pot_bright.value,
+        ),
+        hold_callback=lambda: pot_sequence.reset(),
+        hold_callback_timeout=1,
+    )
+    btn2 = ClickButton(
+        BTN2_PIN,
+        release_callback=lambda: pot_sequence.next(),
+    )
+
     # Mainloop
     while True:
-        if btn2.pressed:
-            pot_sequence.next()
+        btn1.update()
+        btn2.update()
         pixels.update()
         pot_sequence.update()
         pixels.show()
