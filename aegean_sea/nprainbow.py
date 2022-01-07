@@ -15,6 +15,8 @@ class NeoPixelRainbow(NeoPixel):
     for demo and examples.
     """
 
+    sat_levels = 20
+
     def __init__(
         self,
         *args,
@@ -23,6 +25,7 @@ class NeoPixelRainbow(NeoPixel):
         hue_range,
         speed,
         steps,
+        saturation,
         hue_fn=lambda x: x,
         **kwargs
     ):
@@ -31,6 +34,7 @@ class NeoPixelRainbow(NeoPixel):
         self.color_delta = color_delta
         self.initial_hue = initial_hue
         self.steps = steps
+        self.saturation = saturation
         self.hue_range = hue_range
         self.speed = speed
         self.base_idx = 0
@@ -54,9 +58,20 @@ class NeoPixelRainbow(NeoPixel):
     @steps.setter
     def steps(self, value):
         self._steps = value
-        self.color_table = self.create_color_table(
-            self._steps, self.initial_hue, self.hue_fn
-        )
+        self.color_tables = [
+            self.create_color_table(self._steps, i / self.sat_levels, self.hue_fn)
+            for i in range(self.sat_levels + 1)
+        ]
+        self.color_table = self.color_tables[-1]
+
+    @property
+    def saturation(self):
+        return self._saturation
+
+    @saturation.setter
+    def saturation(self, value):
+        self._saturation = value
+        self.color_table = self.color_tables[round(value * self.sat_levels)]
 
     @property
     def speed(self):
@@ -113,15 +128,16 @@ class NeoPixelRainbow(NeoPixel):
             self.base_idx %= 2 * self._hue_steps
             self.speed_acc = 0
 
-    def create_color_table(self, steps, initial_hue=0, hue_fn=lambda x: x):
+    @staticmethod
+    def create_color_table(steps, saturation=1, hue_fn=lambda x: x):
         """
         Builds the color table with n `steps`. Hue can be biased with
         `hue_fn`. Defaults to a linear function when omitted.
         """
         table = array("B", [])
-        for i in range(self.steps):
-            hue = hue_fn((initial_hue + 1 / self.steps * i) % 1.0)
-            for c in self.hsv_to_rgb(hue, 1, 1):
+        for i in range(steps):
+            hue = hue_fn(i / steps)
+            for c in NeoPixelRainbow.hsv_to_rgb(hue, saturation, 1.0):
                 table.append(int(255 * c))
         return table
 

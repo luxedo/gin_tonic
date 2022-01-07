@@ -7,41 +7,6 @@ Configuration is made with the global variables:
 
 Examples:
 ```python
-# BRIGHTNESS
-BRIGHTNESS = 0.01  # Very Dim
-BRIGHTNESS = 0.1   # Weak
-BRIGHTNESS = 0.5   # Medium
-BRIGHTNESS = 1.0   # MY EYES!
-
-# SPEED
-SPEED = 0    # LEDs wont change
-SPEED = 0.2  # Very Slow transition
-SPEED = 1    # Slow transition
-SPEED = 5    # Medium transition
-SPEED = 25   # Fast transition
-SPEED = -25  # Fast transition (reverse direction)
-SPEED = 125  # Crazy party mode
-
-# NUM_COLORS
-NUM_COLORS = 8     # Few colors
-NUM_COLORS = 2^12  # True Color (tm)
-
-# COLOR_DELTA
-COLOR_DELTA = 0     # All LEDs have the same color
-COLOR_DELTA = 0.5   # Half rainbow
-COLOR_DELTA = -0.5  # Reversed Half rainbow
-COLOR_DELTA = 1.0   # FULL rainbow
-COLOR_DELTA = 2.0   # DOUBLE RAINBOOOOOOW
-
-# INITIAL_HUE
-INITIAL_HUE=0     # Starts at RED
-INITIAL_HUE=0.25  # Starts at ORANGE
-INITIAL_HUE=0.40  # Starts at YELLOW
-INITIAL_HUE=0.50  # Starts at GREEN
-INITIAL_HUE=0.60  # Starts at CYAN
-INITIAL_HUE=0.7   # Starts at BLUE
-INITIAL_HUE=0.8   # Starts at PURPLE
-INITIAL_HUE=0.9   # Starts at PINK
 ```
 
 Because the LEDs response is not linear, the HUE is resampled with
@@ -63,31 +28,29 @@ from nprainbow import NeoPixelRainbow
 
 # NEOPIXEL CONSTANTS
 PIXEL_PIN = board.GP18  # Neopixel pin
-NUM_PIXELS = 300  # Number of NeoPixels
+NUM_PIXELS = 78  # Number of NeoPixels
 
 # NEOPIXEL INITIAL CONFIGURATION
-SPEED = 1.0  # Transition speed
-NUM_COLORS = 4096  # Number of colors in the table
+SPEED = 0.1  # Transition speed
+NUM_COLORS = 512  # Number of colors in the table
 COLOR_DELTA = 0.3  # Hue delta (begining of the strip <=> end of the strip)
-COLOR_DELTA = 1.0  # Hue delta (begining of the strip <=> end of the strip)
-INITIAL_HUE = 0.0  # Hue offset for the initial color
+HUE_LOWER = 0.0  # Hue offset initial color
+HUE_UPPER = 1.0  # Hue offset final color
+BRIGHTNESS = 0.2
+SATURATION = 1.0
 
 # CONFIGURATION RANGES
-BRIGHTNESS_STEPS = (0, 0.01, 0.03, 0.1, 0.30, 1.0)
-BRIGHTNESS_INITIAL_STEP = 3
 SPEED_RANGE = (-64, 64)
-NUM_COLORS_RANGE = (1, 4096)
 COLOR_DELTA_RANGE = (-16, 16)
-HUE_RANGE = (0, 0.5)
+UNIT_RANGE = (0, 1.0)
 
 # Super users only
-SIGMOID_A = 3  # Hue bias parameter a
-SIGMOID_B = 5  # Hue bias parameter b
+SIGMOID_A = 2  # Hue bias parameter a
+SIGMOID_B = 3  # Hue bias parameter b
 
 # BUTTONS CONFIGURATION
 BTN1_PIN = board.GP7  # Neopixel pin
 BTN2_PIN = board.GP11  # Neopixel pin
-FEEDBACK_COLOR = (63, 63, 63)
 BTN_DEBOUNCE = 0.2
 POT1_PIN = board.A0
 POT2_PIN = board.A2
@@ -112,9 +75,10 @@ class ClickButton:
 
 
 class Potentiometer:
-    change_threshold = 800
-    _min_value = 9000
+    change_threshold = 200
+    _min_value = 2000
     _max_value = 64000
+    window_size = 20
 
     def __init__(
         self, analog_in, initial_value, value_range, callback, profile="linear"
@@ -140,19 +104,35 @@ class Potentiometer:
             self._profile = lambda x: (((2 * x) - 1) ** 5 + 1) / 2
         else:
             raise NotImplemented(f"Profile {self.profile} not implemented")
-        self.locked = True
         self.locked_value = self.bisection(
-            lambda x: self.transform(x) - initial_value, 0, 1e8, 1000, 100
+            lambda x: self.transform((x - self._min_value) / self._delta)
+            - initial_value,
+            0,
+            1e8,
+            1000,
+            100,
         )
         self._previous_value = self.locked_value
-        self._value = self.analog_in.value
+        self.window = [self.analog_in.value for _ in range(self.window_size)]
+        self._value = sum(self.window) / self.window_size
+        self._bound_value = (self.locked_value - self._min_value) / self._delta
+        self._bound_value = (
+            0
+            if self._bound_value < 0
+            else 1
+            if self._bound_value > 1
+            else self._bound_value
+        )
+        self.locked = True
 
     def has_changed(self):
-        self._value = self.analog_in.value
+        self.window.pop(0)
+        self.window.append(self.analog_in.value)
+        self._value = sum(self.window) / self.window_size
         if self.locked:
             val_diff = abs(self.locked_value - self._value)
             if val_diff < 5 * self.change_threshold:
-                self.locked = False
+                self.unlock()
                 return True
         else:
             val_diff = abs(self._previous_value - self._value)
@@ -163,26 +143,38 @@ class Potentiometer:
 
     @property
     def value(self):
-        value = self.transform(self._value)
+        value = self.transform(self.bound_value)
         if value < self.min_value:
             return self.min_value
         elif value > self.max_value:
             return self.max_value
         return value
 
+    @property
+    def bound_value(self):
+        if self.locked:
+            return self._bound_value
+        bound_value = (self._value - self._min_value) / self._delta
+        if bound_value < 0:
+            return 0
+        elif bound_value > 1:
+            return 1
+        return bound_value
+
     def transform(self, value):
-        return (
-            self._profile((value - self._min_value) / self._delta) * self.delta
-            + self.min_value
-        )
+        return self._profile(value) * self.delta + self.min_value
 
     def update(self):
         if self.has_changed():
             self.callback(self.value)
+            return True
+        return False
 
     def lock(self):
-        self.locked_value = self._value
-        self.locked = True
+        if not self.locked:
+            self.locked_value = self._value
+            self._bound_value = self.bound_value
+            self.locked = True
 
     def unlock(self):
         self.locked = False
@@ -242,18 +234,46 @@ class Potentiometer:
 
 
 class PotSequence:
-    def __init__(self, modes):
+    n_colors = 64
+
+    def __init__(self, modes, pixels, indicator_timeout=5):
         self.modes = modes
         self.current_index = 0
+        self.pixels = pixels
+        self.indicator_timeout = indicator_timeout
+        self.all_pots = [pot for mode in self.modes for pot in mode["pots"]]
+        self.n_indicators = 1 + len(self.all_pots)
+        self._timeout = time.monotonic() + self.indicator_timeout
+        self.color_table = NeoPixelRainbow.create_color_table(
+            steps=int(
+                3 * self.n_colors / 2
+            ),  # Final color should be blue. Psst thiss just a trick
+            saturation=1.0,
+        )
 
     def next(self):
-        for pot in self.modes[self.current_index]:
+        for pot in self.modes[self.current_index]["pots"]:
             pot.lock()
         self.current_index = (self.current_index + 1) % len(self.modes)
+        self._timeout = time.monotonic() + self.indicator_timeout
 
-    def update_mode(self):
-        for pot in self.modes[self.current_index]:
-            pot.update()
+    def update(self):
+        has_changed = False
+        for pot in self.modes[self.current_index]["pots"]:
+            has_changed |= pot.update()
+        if has_changed:
+            self._timeout = time.monotonic() + self.indicator_timeout
+        if self._timeout != 0:
+            if time.monotonic() < self._timeout:
+                self.pixels[0] = self.modes[self.current_index]["color"]
+                for i, pot in enumerate(self.all_pots):
+                    color_idx = math.floor((self.n_colors - 1) * pot.bound_value)
+                    self.pixels[i + 1] = list(
+                        self.color_table[3 * color_idx : 3 * (color_idx + 1)]
+                    )
+                self.pixels[self.n_indicators] = [0, 0, 0]
+            else:
+                self._timeout = 0
 
 
 # Functions
@@ -266,25 +286,18 @@ def locked_sigmoid(x, a, b):
     return k / (1 + (math.exp(a - b * x))) + C
 
 
-def button_feedback(pixels):
-    """
-    Feedback when pressing the button
-    """
-    for i in range(len(pixels)):
-        pixels[i] = FEEDBACK_COLOR
-    pixels.show()
-
-
 # Sweet main
 def main():
     pixels = NeoPixelRainbow(
         PIXEL_PIN,
         NUM_PIXELS,
+        brightness=0.1,
         color_delta=COLOR_DELTA,
-        initial_hue=INITIAL_HUE,
-        hue_range=HUE_RANGE,
+        initial_hue=HUE_LOWER,
+        hue_range=(HUE_LOWER, HUE_UPPER),
         speed=SPEED,
         steps=NUM_COLORS,
+        saturation=1.0,
         hue_fn=lambda x: locked_sigmoid(x, SIGMOID_A, SIGMOID_B),
         auto_write=False,
     )
@@ -310,8 +323,8 @@ def main():
     )
     pot_hue_lower = Potentiometer(
         pot1,
-        0,
-        (0, 1),
+        HUE_LOWER,
+        UNIT_RANGE,
         callback=lambda value: setattr(
             pixels,
             "hue_range",
@@ -321,34 +334,43 @@ def main():
     )
     pot_hue_delta = Potentiometer(
         pot2,
-        1,
-        (0, 1),
+        HUE_UPPER,
+        UNIT_RANGE,
         callback=lambda value: setattr(
             pixels, "hue_range", (pixels.hue_range[0], value)
         ),
         profile="linear",
     )
-
-    mode_sequence = PotSequence(
+    pot_sat = Potentiometer(
+        pot1,
+        SATURATION,
+        UNIT_RANGE,
+        callback=lambda value: setattr(pixels, "saturation", value),
+        profile="linear",
+    )
+    pot_bright = Potentiometer(
+        pot2,
+        BRIGHTNESS,
+        UNIT_RANGE,
+        callback=lambda value: setattr(pixels, "brightness", value),
+        profile="quadratic",
+    )
+    pot_sequence = PotSequence(
         [
-            [pot_hue_lower, pot_hue_delta],
-            [pot_speed, pot_color_delta],
-        ]
+            {"color": (255, 0, 0), "pots": [pot_speed, pot_color_delta]},
+            {"color": (0, 255, 0), "pots": [pot_hue_lower, pot_hue_delta]},
+            {"color": (0, 0, 255), "pots": [pot_sat, pot_bright]},
+        ],
+        pixels=pixels,
+        indicator_timeout=5,
     )
 
     # Mainloop
-    brightness_idx = BRIGHTNESS_INITIAL_STEP
-    pixels.brightness = BRIGHTNESS_STEPS[brightness_idx]
     while True:
-        if btn1.pressed:
-            button_feedback(pixels)
-            brightness_idx = (brightness_idx + 1) % len(BRIGHTNESS_STEPS)
-            pixels.brightness = BRIGHTNESS_STEPS[brightness_idx]
         if btn2.pressed:
-            button_feedback(pixels)
-            mode_sequence.next()
-        mode_sequence.update_mode()
+            pot_sequence.next()
         pixels.update()
+        pot_sequence.update()
         pixels.show()
 
 
