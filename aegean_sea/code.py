@@ -28,29 +28,35 @@ from nprainbow import NeoPixelRainbow
 
 # NEOPIXEL CONSTANTS
 PIXEL_PIN = board.GP18  # Neopixel pin
-NUM_PIXELS = 78  # Number of NeoPixels
+NUM_PIXELS = 77  # Number of NeoPixels
+MAX_CURRENT = 2.5  # Power source max current
+LED_MAX_CURRENT = 0.02  # 20 mA LED max current
 
 # NEOPIXEL INITIAL CONFIGURATION
 SPEED = 0.1  # Transition speed
-NUM_COLORS = 512  # Number of colors in the table
+NUM_COLORS = 200  # Number of colors in the table
 COLOR_DELTA = 0.3  # Hue delta (begining of the strip <=> end of the strip)
 HUE_LOWER = 0.0  # Hue offset initial color
 HUE_UPPER = 1.0  # Hue offset final color
-BRIGHTNESS = 0.2
-SATURATION = 1.0
+BRIGHTNESS = 0.2  # Initial brightness
+SATURATION = 1.0  # Initial saturation
 
 # CONFIGURATION RANGES
 SPEED_RANGE = (-64, 64)
 COLOR_DELTA_RANGE = (-16, 16)
 UNIT_RANGE = (0, 1.0)
+MAX_BRIGHTNESS = MAX_CURRENT / NUM_PIXELS / LED_MAX_CURRENT
+MAX_BRIGHTNESS = 1 if MAX_BRIGHTNESS > 1 else MAX_BRIGHTNESS
+MAX_BRIGHTNESS = 0.01 if MAX_BRIGHTNESS <= 0 else MAX_BRIGHTNESS
+BRIGHTNESS_RANGE = (0, MAX_BRIGHTNESS)
 
 # Super users only
-SIGMOID_A = 2  # Hue bias parameter a
-SIGMOID_B = 3  # Hue bias parameter b
+SIGMOID_A = 3  # Hue bias parameter a
+SIGMOID_B = 5  # Hue bias parameter b
 
 # BUTTONS CONFIGURATION
-BTN1_PIN = board.GP7  # Neopixel pin
-BTN2_PIN = board.GP11  # Neopixel pin
+BTN1_PIN = board.GP11  # Mode button
+BTN2_PIN = board.GP7  # On/Off/Reset button
 POT1_PIN = board.A0
 POT2_PIN = board.A2
 
@@ -106,7 +112,7 @@ class ClickButton:
 
 
 class Potentiometer:
-    change_threshold = 200
+    change_threshold = 400
     _min_value = 2000
     _max_value = 64000
     window_size = 20
@@ -140,20 +146,21 @@ class Potentiometer:
         self.lock(self.initial_value)
 
     def has_changed(self):
-        self.window.pop(0)
-        self.window.append(self.analog_in.value)
-        self._value = sum(self.window) / self.window_size
         if self.locked:
-            val_diff = abs(self.locked_value - self._value)
-            if val_diff < 5 * self.change_threshold:
+            val_diff = abs(self.locked_value - self.analog_in.value)
+            if val_diff < 10 * self.change_threshold:
                 self.unlock()
                 return True
         else:
+            self.window.pop(0)
+            self.window.append(self.analog_in.value)
+            self._value = sum(self.window) / self.window_size
             val_diff = abs(self._previous_value - self._value)
             if val_diff > self.change_threshold:
                 self._previous_value = self._value
                 return True
-        return False
+            else:
+                return False
 
     @property
     def value(self):
@@ -388,7 +395,7 @@ def main():
     pot_bright = Potentiometer(
         pot2,
         BRIGHTNESS,
-        UNIT_RANGE,
+        BRIGHTNESS_RANGE,
         callback=lambda value: setattr(pixels, "brightness", value),
         profile="quadratic",
     )
@@ -422,7 +429,8 @@ def main():
         btn1.update()
         btn2.update()
         pixels.update()
-        pot_sequence.update()
+        for i in range(5):
+            pot_sequence.update()
         pixels.show()
 
 
