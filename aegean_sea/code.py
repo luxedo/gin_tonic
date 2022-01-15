@@ -5,9 +5,13 @@
 
 Configuration is made with the global variables:
 
-Examples:
-```python
-```
+SPEED
+NUM_COLORS
+COLOR_DELTA
+HUE_LOWER
+HUE_UPPER
+BRIGHTNESS
+SATURATION
 
 Because the LEDs response is not linear, the HUE is resampled with
 a sigmoid curve bounded at (0, 0) and (1, 1) to bias the colors.
@@ -34,7 +38,7 @@ LED_MAX_CURRENT = 0.02  # 20 mA LED max current
 
 # NEOPIXEL INITIAL CONFIGURATION
 SPEED = 0.1  # Transition speed
-NUM_COLORS = 200  # Number of colors in the table
+NUM_COLORS = 256  # Number of colors in the table
 COLOR_DELTA = 0.3  # Hue delta (begining of the strip <=> end of the strip)
 HUE_LOWER = 0.0  # Hue offset initial color
 HUE_UPPER = 1.0  # Hue offset final color
@@ -43,7 +47,7 @@ SATURATION = 1.0  # Initial saturation
 
 # CONFIGURATION RANGES
 SPEED_RANGE = (-64, 64)
-COLOR_DELTA_RANGE = (-16, 16)
+COLOR_DELTA_RANGE = (-20, 20)
 UNIT_RANGE = (0, 1.0)
 MAX_BRIGHTNESS = MAX_CURRENT / NUM_PIXELS / LED_MAX_CURRENT
 MAX_BRIGHTNESS = 1 if MAX_BRIGHTNESS > 1 else MAX_BRIGHTNESS
@@ -112,13 +116,19 @@ class ClickButton:
 
 
 class Potentiometer:
-    change_threshold = 400
+    change_threshold = 300
     _min_value = 2000
-    _max_value = 64000
-    window_size = 20
+    _max_value = 63500
+    window_size = 16
 
     def __init__(
-        self, analog_in, initial_value, value_range, callback, profile="linear"
+        self,
+        analog_in,
+        initial_value,
+        value_range,
+        callback,
+        profile="linear",
+        name=None,
     ):
         self.analog_in = analog_in
         self.initial_value = initial_value
@@ -127,6 +137,7 @@ class Potentiometer:
         self.max_value = value_range[1]
         self.delta = self.max_value - self.min_value
         self.callback = callback
+        self.name = name
         self.profile = profile
         if self.profile == "linear":
             self._profile = lambda x: x
@@ -143,79 +154,64 @@ class Potentiometer:
         else:
             raise NotImplemented(f"Profile {self.profile} not implemented")
         self.window = [self.analog_in.value for _ in range(self.window_size)]
+        self.locked = False
         self.lock(self.initial_value)
+        self.previous_raw_value = self.raw_value
 
-    def has_changed(self):
-        if self.locked:
-            val_diff = abs(self.locked_value - self.analog_in.value)
-            if val_diff < 10 * self.change_threshold:
-                self.unlock()
-                return True
-        else:
+    def update(self):
+        if not self.locked:
             self.window.pop(0)
             self.window.append(self.analog_in.value)
-            self._value = sum(self.window) / self.window_size
-            val_diff = abs(self._previous_value - self._value)
+            raw_value = self.raw_value
+            val_diff = abs(self.previous_raw_value - raw_value)
             if val_diff > self.change_threshold:
-                self._previous_value = self._value
+                self.previous_raw_value = raw_value
+                self.callback(self.value)
                 return True
-            else:
-                return False
+        else:
+            val_diff = abs(self.locked_raw_value - self.analog_in.value)
+            if val_diff < 5 * self.change_threshold:
+                self.unlock()
+        return False
 
     @property
-    def value(self):
-        value = self.transform(self.bound_value)
-        if value < self.min_value:
-            return self.min_value
-        elif value > self.max_value:
-            return self.max_value
-        return value
+    def raw_value(self):
+        if self.locked:
+            return self.locked_raw_value
+        return sum(self.window) / self.window_size
 
     @property
     def bound_value(self):
-        if self.locked:
-            return self._bound_value
-        bound_value = (self._value - self._min_value) / self._delta
+        bound_value = (self.raw_value - self._min_value) / self._delta
         if bound_value < 0:
             return 0
         elif bound_value > 1:
             return 1
         return bound_value
 
+    @property
+    def value(self):
+        return self.transform(self.bound_value)
+
     def transform(self, value):
         return self._profile(value) * self.delta + self.min_value
 
-    def update(self):
-        if self.has_changed():
-            self.callback(self.value)
-            return True
-        return False
+    def __str__(self):
+        return f"{self.name}: {self.value}"
 
     def lock(self, value=None):
         if value is not None:
-            self.locked_value = self.bisection(
+            self.locked_raw_value = self.bisection(
                 lambda x: self.transform((x - self._min_value) / self._delta) - value,
                 0,
                 1e8,
                 1000,
                 100,
             )
-            self._previous_value = self.locked_value
-            self._value = sum(self.window) / self.window_size
-            self._bound_value = (self.locked_value - self._min_value) / self._delta
-            self._bound_value = (
-                0
-                if self._bound_value < 0
-                else 1
-                if self._bound_value > 1
-                else self._bound_value
-            )
             self.locked = True
-        else:
-            if not self.locked:
-                self.locked_value = self._value
-                self._bound_value = self.bound_value
-                self.locked = True
+        elif not self.locked:
+            self.locked_raw_value = self.raw_value
+            self.locked = True
 
     def unlock(self):
         self.locked = False
@@ -291,13 +287,19 @@ class PotSequence:
             ),  # Final color should be blue. Psst thiss just a trick
             saturation=1.0,
         )
+        print(self)
+
+    def __str__(self):
+        return "################\n" + "\n".join([str(pot) for pot in self.all_pots])
 
     def reset(self):
         for pot in self.all_pots:
             pot.lock(pot.initial_value)
             pot.callback(pot.initial_value)
+        print(self)
 
     def next(self):
+        print(self)
         for pot in self.modes[self.current_index]["pots"]:
             pot.lock()
         self.current_index = (self.current_index + 1) % len(self.modes)
@@ -356,7 +358,8 @@ def main():
         SPEED,
         SPEED_RANGE,
         callback=lambda value: setattr(pixels, "speed", value),
-        profile="symmetric_fifth",
+        profile="symmetric_cubic",
+        name="Speed",
     )
     pot_color_delta = Potentiometer(
         pot2,
@@ -364,6 +367,7 @@ def main():
         COLOR_DELTA_RANGE,
         callback=lambda value: setattr(pixels, "color_delta", value),
         profile="symmetric_cubic",
+        name="Color Delta",
     )
     pot_hue_lower = Potentiometer(
         pot1,
@@ -375,6 +379,7 @@ def main():
             (value, pixels.hue_range[1]),
         ),
         profile="linear",
+        name="Hue Lower",
     )
     pot_hue_delta = Potentiometer(
         pot2,
@@ -384,6 +389,7 @@ def main():
             pixels, "hue_range", (pixels.hue_range[0], value)
         ),
         profile="linear",
+        name="Hue Delta",
     )
     pot_sat = Potentiometer(
         pot1,
@@ -391,6 +397,7 @@ def main():
         UNIT_RANGE,
         callback=lambda value: setattr(pixels, "saturation", value),
         profile="linear",
+        name="Saturation",
     )
     pot_bright = Potentiometer(
         pot2,
@@ -398,6 +405,7 @@ def main():
         BRIGHTNESS_RANGE,
         callback=lambda value: setattr(pixels, "brightness", value),
         profile="quadratic",
+        name="Brightness",
     )
     pot_sequence = PotSequence(
         [
@@ -434,5 +442,30 @@ def main():
         pixels.show()
 
 
+def test():
+    pot1 = analogio.AnalogIn(POT1_PIN)
+    pot2 = analogio.AnalogIn(POT2_PIN)
+
+    pot_speed = Potentiometer(
+        pot1,
+        SPEED,
+        SPEED_RANGE,
+        callback=print,
+        profile="symmetric_cubic",
+        name="Speed",
+    )
+    while True:
+        pot_speed.update()
+    # pot_color_delta = Potentiometer(
+    #     pot2,
+    #     COLOR_DELTA,
+    #     COLOR_DELTA_RANGE,
+    #     callback=print,
+    #     profile="symmetric_cubic",
+    #     name="Color Delta",
+    # )
+
+
 if __name__ == "__main__":
     main()
+    # test()
